@@ -17,13 +17,20 @@ static_assert(alignof(lf_pool_t) == CACHE_LINE_SZ, "");
 
 lf_pool_t * lf_pool_new(size_t num_elts, size_t elt_sz)
 {
-  size_t mem_sz;
-  lf_pool_footprint(num_elts, elt_sz, &mem_sz, NULL);
+  size_t mem_sz, mem_align;
+  lf_pool_footprint(num_elts, elt_sz, &mem_sz, &mem_align);
 
-  void * mem = malloc(mem_sz);;
-  if (!mem) return NULL;
+  void *mem = NULL;
+  int ret = posix_memalign(&mem, mem_align, mem_sz);
+  if (ret != 0) return NULL;
 
-  return lf_pool_mem_init(mem, num_elts, elt_sz);
+  lf_pool_t *pool = lf_pool_mem_init(mem, num_elts, elt_sz);
+  if (!pool) {
+    free(mem);
+    return NULL;
+  }
+
+  return pool;
 }
 
 void lf_pool_delete(lf_pool_t *pool)
@@ -95,10 +102,10 @@ lf_pool_t * lf_pool_mem_init(void *mem, size_t num_elts, size_t elt_sz)
 
 lf_pool_t * lf_pool_mem_join(void *mem, size_t num_elts, size_t elt_sz)
 {
-  lf_pool_t *lf_pool = (lf_pool_t *)mem;
-  if (num_elts != lf_pool->num_elts) return NULL;
-  if (elt_sz != lf_pool->elt_sz) return NULL;
-  return lf_pool;
+  lf_pool_t *pool = (lf_pool_t *)mem;
+  if (num_elts != pool->num_elts) return NULL;
+  if (elt_sz != pool->elt_sz) return NULL;
+  return pool;
 }
 
 void lf_pool_mem_leave(lf_pool_t *lf_pool)
