@@ -40,7 +40,7 @@ static void thread_func_sub(thread_state_t *t)
   lf_bcast_t *b = t->bcast;
   i64 start_time = wallclock();
 
-  u64 last_msg[MAX_THREADS];
+  u64 last_msg[MAX_THREADS] = {};
 
   lf_bcast_sub_t sub[1];
   lf_bcast_sub_begin(sub, b);
