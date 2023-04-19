@@ -43,6 +43,10 @@ static_assert(alignof(lf_ref_t) == alignof(unsigned __int128), "");
 
 #define LF_ATOMIC_INC(ptr)           __sync_add_and_fetch(ptr, 1);
 #define LF_ATOMIC_LOAD_ACQUIRE(ptr)  ({ typeof(*ptr) ret; __atomic_load(ptr, &ret, __ATOMIC_ACQUIRE); ret; })
+#define LF_BARRIER_ACQUIRE()         __atomic_thread_fence(__ATOMIC_ACQUIRE)
+#define LF_BARRIER_RELEASE()         __atomic_thread_fence(__ATOMIC_RELEASE)
+#define LF_BARRIER_FULL()            __atomic_thread_fence(__ATOMIC_SEQ_CST)
+
 #define LF_ALIGN_UP(s, a)            (((s)+((a)-1))&~((a)-1))
 #define LF_IS_POW2(s)                ((!!(s))&(!((s)&((s)-1))))
 

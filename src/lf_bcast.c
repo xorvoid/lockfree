@@ -119,7 +119,9 @@ bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_s
     if (sub->idx == b->tail_idx) return false;
 
     lf_ref_t * ref_ptr = &b->slots[sub->idx & b->depth_mask];
-    lf_ref_t   ref     = LF_ATOMIC_LOAD_ACQUIRE(ref_ptr);
+    lf_ref_t   ref     = *ref_ptr;
+
+    LF_BARRIER_ACQUIRE();
 
     if (ref.tag != sub->idx) { // We've fallen behind and the message we wanted was dropped?
       sub->idx++;
@@ -130,7 +132,9 @@ bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_s
     size_t msg_sz = *(size_t*)elt;
     memcpy(msg_buf, elt+sizeof(size_t), msg_sz);
 
-    lf_ref_t ref2 = LF_ATOMIC_LOAD_ACQUIRE(ref_ptr);
+    LF_BARRIER_ACQUIRE();
+
+    lf_ref_t ref2 = *ref_ptr;
     if (!LF_REF_EQUAL(ref, ref2)) { // Data changed while reading? Drop it.
       sub->idx++;
       LF_PAUSE();
