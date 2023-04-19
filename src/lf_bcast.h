@@ -14,3 +14,9 @@ void         lf_bcast_delete(lf_bcast_t *bcast);
 bool         lf_bcast_pub(lf_bcast_t *b, void * msg, size_t msg_sz);
 void         lf_bcast_sub_begin(lf_bcast_sub_t *sub, lf_bcast_t *b);
 bool         lf_bcast_sub_next(lf_bcast_sub_t *sub, void * msg_buf, size_t * _out_msg_sz, size_t *_out_drops);
+
+/* Advanced API */
+void         lf_bcast_footprint(size_t depth, size_t max_msg_sz, size_t *size, size_t *align);
+lf_bcast_t * lf_bcast_mem_init(void *mem, size_t depth, size_t max_msg_sz);
+lf_bcast_t * lf_bcast_mem_join(void *mem, size_t depth, size_t max_msg_sz);
+void         lf_bcast_mem_leave(lf_bcast_t *lf_bcast);

@@ -6,32 +6,43 @@
 
 struct __attribute__((aligned(CACHE_LINE_SZ))) lf_bcast
 {
-  u64         depth_mask;
-  u64         head_idx;
-  u64         tail_idx;
-  lf_pool_t * pool; // TODO REMOVE ME SO WE CAN LIVE IN SHM
-  char        _pad_2[CACHE_LINE_SZ - 3*sizeof(u64) - sizeof(lf_pool_t*)];
+  u64      depth_mask;
+  u64      max_msg_sz;
+  u64      head_idx;
+  u64      tail_idx;
+  size_t   pool_off;
+  char     _pad_2[CACHE_LINE_SZ - 5*sizeof(u64) - sizeof(size_t)];
 
   lf_ref_t slots[];
 };
 static_assert(sizeof(lf_bcast_t) == CACHE_LINE_SZ, "");
 static_assert(alignof(lf_bcast_t) == CACHE_LINE_SZ, "");
 
+typedef struct msg msg_t;
+struct __attribute__((aligned(alignof(u128)))) msg
+{
+  u64 size;
+  u8  payload[];
+};
+
+static inline lf_pool_t *get_pool(lf_bcast_t *b) { return (lf_pool_t*)((char*)b + b->pool_off); }
+
 lf_bcast_t * lf_bcast_new(size_t depth, size_t max_msg_sz)
 {
-  if (!LF_IS_POW2(depth)) return NULL;
+  size_t mem_sz, mem_align;
+  lf_bcast_footprint(depth, max_msg_sz, &mem_sz, &mem_align);
 
-  size_t mem_sz = sizeof(lf_bcast_t) + depth * sizeof(lf_ref_t);
+  void *mem = NULL;
+  int ret = posix_memalign(&mem, mem_align, mem_sz);
+  if (ret != 0) return NULL;
 
-  lf_bcast_t *b = (lf_bcast_t*)malloc(mem_sz);
-  b->depth_mask = depth-1;
-  b->head_idx = 1; /* Start from 1 because we use 0 to mean "unused" */
-  b->tail_idx = 1; /* Start from 1 because we use 0 to mean "unused" */
-  b->pool = lf_pool_new(depth+ESTIMATED_PUBLISHERS, max_msg_sz+sizeof(size_t));
+  lf_bcast_t *bcast = lf_bcast_mem_init(mem, depth, max_msg_sz);
+  if (!bcast) {
+    free(mem);
+    return NULL;
+  }
 
-  memset(b->slots, 0, depth * sizeof(lf_ref_t));
-
-  return b;
+  return bcast;
 }
 
 void lf_bcast_delete(lf_bcast_t *bcast)
@@ -47,18 +58,16 @@ static void try_drop_head(lf_bcast_t *b, u64 head_idx)
 
   // FIXME: THIS IS WHERE WE MIGHT LOSE SHARED RESOURCES
   void *elt = (void*)head_cur.val;
-  lf_pool_release(b->pool, elt);
+  lf_pool_release(get_pool(b), elt);
 }
 
-bool lf_bcast_pub(lf_bcast_t *b, void * msg, size_t msg_sz)
+bool lf_bcast_pub(lf_bcast_t *b, void * msg_buf, size_t msg_sz)
 {
-  char *elt = lf_pool_acquire(b->pool);
-  if (!elt) return false; // out of elements
+  msg_t *msg = (msg_t*)lf_pool_acquire(get_pool(b));
+  if (!msg) return false; // out of elements
 
-  memcpy(elt, &msg_sz, sizeof(msg_sz));
-  memcpy(elt+sizeof(msg_sz), msg, msg_sz);
-
-  // TODO APPEND ELT
+  msg->size = msg_sz;
+  memcpy(msg->payload, msg_buf, msg_sz);
 
   while (1) {
     u64        head_idx = b->head_idx;
@@ -89,7 +98,7 @@ bool lf_bcast_pub(lf_bcast_t *b, void * msg, size_t msg_sz)
     }
 
     // Otherwise, try to append the tail
-    lf_ref_t tail_next = LF_REF_MAKE(tail_idx, (u64)elt);
+    lf_ref_t tail_next = LF_REF_MAKE(tail_idx, (u64)msg);
     if (!LF_REF_CAS(tail_ptr, tail_cur, tail_next)) {
       LF_PAUSE();
       continue;
@@ -138,9 +147,13 @@ bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_s
       LF_PAUSE();
       continue;
     }
-    char * elt    = (char*)ref.val;
-    size_t msg_sz = *(size_t*)elt;
-    memcpy(msg_buf, elt+sizeof(size_t), msg_sz);
+    msg_t *msg = (msg_t*)ref.val;
+    size_t msg_sz = msg->size;
+    if (msg_sz > b->max_msg_sz) { // Size doesn't make sense.. inconsistent
+      LF_PAUSE();
+      continue;
+    }
+    memcpy(msg_buf, msg->payload, msg_sz);
 
     LF_BARRIER_ACQUIRE();
 
@@ -157,4 +170,75 @@ bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_s
     *_out_drops  = drops;
     return true;
   }
+}
+
+void lf_bcast_footprint(size_t depth, size_t max_msg_sz, size_t *_size, size_t *_align)
+{
+  size_t elt_sz    = LF_ALIGN_UP(sizeof(msg_t) + max_msg_sz, alignof(u128));
+  size_t pool_elts = depth + ESTIMATED_PUBLISHERS;
+
+  size_t pool_size, pool_align;
+  lf_pool_footprint(pool_elts, elt_sz, &pool_size, &pool_align);
+
+  size_t size = sizeof(lf_bcast_t);
+  size += depth * sizeof(lf_ref_t);
+  size = LF_ALIGN_UP(size, pool_align);
+  size += pool_size;
+
+  if (_size)  *_size  = size;
+  if (_align) *_align = alignof(lf_bcast_t);
+}
+
+lf_bcast_t * lf_bcast_mem_init(void *mem, size_t depth, size_t max_msg_sz)
+{
+  if (!LF_IS_POW2(depth)) return NULL;
+  if (max_msg_sz == 0) return NULL;
+
+  size_t elt_sz    = LF_ALIGN_UP(sizeof(msg_t) + max_msg_sz, alignof(u128));
+  size_t pool_elts = depth + ESTIMATED_PUBLISHERS;
+
+  size_t pool_size, pool_align;
+  lf_pool_footprint(pool_elts, elt_sz, &pool_size, &pool_align);
+
+  size_t size     = sizeof(lf_bcast_t) + depth * sizeof(lf_ref_t);
+  size_t pool_off = LF_ALIGN_UP(size, pool_align);
+  void * pool_mem = (char*)mem + pool_off;
+
+  lf_bcast_t *b = (lf_bcast_t*)mem;
+  b->depth_mask = depth-1;
+  b->max_msg_sz = max_msg_sz;
+  b->head_idx = 1; /* Start from 1 because we use 0 to mean "unused" */
+  b->tail_idx = 1; /* Start from 1 because we use 0 to mean "unused" */
+  b->pool_off = pool_off;
+
+  memset(b->slots, 0, depth * sizeof(lf_ref_t));
+
+  lf_pool_t *pool = lf_pool_mem_init(pool_mem, pool_elts, elt_sz);
+  if (!pool) return NULL;
+  assert(pool == pool_mem);
+
+  return b;
+}
+
+lf_bcast_t * lf_bcast_mem_join(void *mem, size_t depth, size_t max_msg_sz)
+{
+  lf_bcast_t *bcast = (lf_bcast_t *)mem;
+  if (depth-1 != bcast->depth_mask) return NULL;
+  if (max_msg_sz != bcast->max_msg_sz) return NULL;
+
+  size_t elt_sz    = LF_ALIGN_UP(sizeof(msg_t) + max_msg_sz, alignof(u128));
+  size_t pool_elts = depth + ESTIMATED_PUBLISHERS;
+
+  void * pool_mem = (char*)mem + bcast->pool_off;
+  lf_pool_t * pool = lf_pool_mem_join(pool_mem, pool_elts, elt_sz);
+  if (!pool) return NULL;
+  assert(pool == pool_mem);
+
+  return bcast;
+}
+
+void lf_bcast_mem_leave(lf_bcast_t *b)
+{
+  lf_pool_t *pool = get_pool(b);
+  lf_pool_mem_leave(pool);
 }

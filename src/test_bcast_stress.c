@@ -48,7 +48,7 @@ static void thread_func_sub(thread_state_t *t)
   u64 msg;
   size_t msg_sz;
   size_t drops;
-  for (size_t i = 0; i < (size_t)1e8; i++) {
+  for (size_t i = 0; i < (size_t)1e9; i++) {
     if (!lf_bcast_sub_next(sub, &msg, &msg_sz, &drops)) continue;
     assert(msg_sz == sizeof(msg));
 
@@ -78,7 +78,7 @@ static void run_test(const char *test_name, size_t num_pub, size_t num_sub, size
   lf_bcast_t *b = lf_bcast_new(num_elts, sizeof(u64));
   if (!b) FAIL("Failed to create new bcast");
 
-  size_t pub_msgs = (size_t)1e4;
+  size_t pub_msgs = (size_t)1e5;
   size_t sub_msgs = num_pub * pub_msgs;
 
   assert(num_sub < MAX_THREADS);
@@ -115,11 +115,11 @@ static void run_test(const char *test_name, size_t num_pub, size_t num_sub, size
   printf("Test: %s\n", test_name);
   for (size_t i = 0; i < num_sub; i++) {
     thread_state_t *t = &sub_threads[i];
-    printf("  Sub Thread %zu | n_msgs: %6zu n_drops: %6zu | %.f nanos/msg\n", i, t->n_msgs, t->n_drops, (double)t->dt/t->n_msgs);
+    printf("  Sub Thread %zu | n_msgs: %7zu n_drops: %7zu | %.f nanos/msg\n", i, t->n_msgs, t->n_drops, (double)t->dt/t->n_msgs);
   }
   for (size_t i = 0; i < num_pub; i++) {
     thread_state_t *t = &pub_threads[i];
-    printf("  Pub Thread %zu | n_msgs: %6zu n_drops: %6zu | %.f nanos/msg\n", i, t->n_msgs, t->n_drops, (double)t->dt/t->n_msgs);
+    printf("  Pub Thread %zu | n_msgs: %7zu n_drops: %7zu | %.f nanos/msg\n", i, t->n_msgs, t->n_drops, (double)t->dt/t->n_msgs);
   }
 }
 
