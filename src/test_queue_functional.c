@@ -1,10 +1,6 @@
 #include "lf_queue.h"
 #include "test_header.h"
 
-#define REQUIRE(expr) do {\
-    if (!(expr)) FAIL("REQUIRE FAILED AT %s:%d WITH '%s'", __FUNCTION__, __LINE__, #expr); \
- } while(0)
-
 static void test_simple(void)
 {
   lf_queue_t *q = lf_queue_new(1);

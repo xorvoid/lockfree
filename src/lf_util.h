@@ -36,11 +36,13 @@ static_assert(alignof(lf_ref_t) == alignof(unsigned __int128), "");
 #define LF_REF_MAKE(_tag, _val)      ({ lf_ref_t r; r.val = _val; r.tag = _tag; r; })
 #define LF_REF_NULL                  ({ lf_ref_t r = {}; r; })
 #define LF_REF_IS_NULL(ref)          ((ref).u128 == 0)
+#define LF_REF_EQUAL(a, b)           ((a).u128 == (b).u128)
 
 #define LF_REF_CAS(ptr, last, next)  _impl_lf_ref_cas(ptr, last, next)
 #define LF_U64_CAS(ptr, last, next)  _impl_lf_u64_cas(ptr, last, next)
 
 #define LF_ATOMIC_INC(ptr)           __sync_add_and_fetch(ptr, 1);
+#define LF_ATOMIC_LOAD_ACQUIRE(ptr)  ({ typeof(*ptr) ret; __atomic_load(ptr, &ret, __ATOMIC_ACQUIRE); ret; })
 #define LF_ALIGN_UP(s, a)            (((s)+((a)-1))&~((a)-1))
 #define LF_IS_POW2(s)                ((!!(s))&(!((s)&((s)-1))))
 

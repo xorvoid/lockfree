@@ -22,3 +22,7 @@ static inline i64 wallclock(void)
 }
 
 #define FAIL(...) do { fprintf(stderr, "FAIL: "); fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); abort(); } while(0)
+
+#define REQUIRE(expr) do {\
+    if (!(expr)) FAIL("REQUIRE FAILED AT %s:%d WITH '%s'", __FUNCTION__, __LINE__, #expr); \
+ } while(0)
