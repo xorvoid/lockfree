@@ -9,7 +9,8 @@ static bool pub(lf_bcast_t *b, u64 val)
 static bool sub_next(lf_bcast_sub_t *sub, u64 *val)
 {
   size_t msg_sz;
-  bool success = lf_bcast_sub_next(sub, val, &msg_sz);
+  size_t drops;
+  bool success = lf_bcast_sub_next(sub, val, &msg_sz, &drops);
   if (!success) return success;
   assert(msg_sz == sizeof(u64));
   return true;

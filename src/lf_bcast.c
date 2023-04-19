@@ -2,6 +2,8 @@
 #include "lf_pool.h"
 #include "lf_util.h"
 
+#define ESTIMATED_PUBLISHERS 16
+
 struct __attribute__((aligned(CACHE_LINE_SZ))) lf_bcast
 {
   u64         depth_mask;
@@ -25,7 +27,7 @@ lf_bcast_t * lf_bcast_new(size_t depth, size_t max_msg_sz)
   b->depth_mask = depth-1;
   b->head_idx = 1; /* Start from 1 because we use 0 to mean "unused" */
   b->tail_idx = 1; /* Start from 1 because we use 0 to mean "unused" */
-  b->pool = lf_pool_new(depth+1, max_msg_sz+sizeof(size_t));
+  b->pool = lf_pool_new(depth+ESTIMATED_PUBLISHERS, max_msg_sz+sizeof(size_t));
 
   memset(b->slots, 0, depth * sizeof(lf_ref_t));
 
@@ -43,7 +45,7 @@ static void try_drop_head(lf_bcast_t *b, u64 head_idx)
   lf_ref_t head_cur = b->slots[head_idx & b->depth_mask];
   if (!LF_U64_CAS(&b->head_idx, head_idx, head_idx+1)) return;
 
-  // FIXME: THIS IS WHERE WE MIGHT LOSS SHARED RESOURCES
+  // FIXME: THIS IS WHERE WE MIGHT LOSE SHARED RESOURCES
   void *elt = (void*)head_cur.val;
   lf_pool_release(b->pool, elt);
 }
@@ -63,6 +65,7 @@ bool lf_bcast_pub(lf_bcast_t *b, void * msg, size_t msg_sz)
     u64        tail_idx = b->tail_idx;
     lf_ref_t * tail_ptr = &b->slots[tail_idx & b->depth_mask];
     lf_ref_t   tail_cur = *tail_ptr;
+    LF_BARRIER_ACQUIRE();
 
     // Stale tail pointer? Try to advance it..
     if (tail_cur.tag == tail_idx) {
@@ -70,7 +73,12 @@ bool lf_bcast_pub(lf_bcast_t *b, void * msg, size_t msg_sz)
       LF_PAUSE();
       continue;
     }
-    assert(tail_cur.tag < tail_idx);
+
+    // Stale tail_idx? Try again..
+    if (tail_cur.tag >= tail_idx) {
+      LF_PAUSE();
+      continue;
+    }
 
     // Slot currently used.. full.. roll off the head
     if (head_idx <= tail_cur.tag) {
@@ -83,8 +91,8 @@ bool lf_bcast_pub(lf_bcast_t *b, void * msg, size_t msg_sz)
     // Otherwise, try to append the tail
     lf_ref_t tail_next = LF_REF_MAKE(tail_idx, (u64)elt);
     if (!LF_REF_CAS(tail_ptr, tail_cur, tail_next)) {
-      continue;
       LF_PAUSE();
+      continue;
     }
 
     // Success, try to update the tail. If we fail, it's okay.
@@ -110,10 +118,11 @@ void lf_bcast_sub_begin(lf_bcast_sub_t *_sub, lf_bcast_t *b)
   sub->idx = b->head_idx;
 }
 
-bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_sz)
+bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_sz, size_t *_out_drops)
 {
-  sub_impl_t *sub = (sub_impl_t*)_sub;
-  lf_bcast_t *b = sub->bcast;
+  sub_impl_t *sub   = (sub_impl_t*)_sub;
+  lf_bcast_t *b     = sub->bcast;
+  size_t      drops = 0;
 
   while (1) {
     if (sub->idx == b->tail_idx) return false;
@@ -125,6 +134,7 @@ bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_s
 
     if (ref.tag != sub->idx) { // We've fallen behind and the message we wanted was dropped?
       sub->idx++;
+      drops++;
       LF_PAUSE();
       continue;
     }
@@ -137,12 +147,14 @@ bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_s
     lf_ref_t ref2 = *ref_ptr;
     if (!LF_REF_EQUAL(ref, ref2)) { // Data changed while reading? Drop it.
       sub->idx++;
+      drops++;
       LF_PAUSE();
       continue;
     }
 
     sub->idx++;
     *_out_msg_sz = msg_sz;
+    *_out_drops  = drops;
     return true;
   }
 }
