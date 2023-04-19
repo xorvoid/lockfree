@@ -18,8 +18,8 @@ typedef int16_t           i16;
 typedef int32_t           i32;
 typedef int64_t           i64;
 typedef __int128          i128;
-typedef struct lf_ref     lf_ref_t;
 
+typedef struct lf_ref lf_ref_t;
 struct lf_ref
 {
   union {

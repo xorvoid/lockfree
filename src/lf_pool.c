@@ -44,8 +44,9 @@ void *lf_pool_acquire(lf_pool_t *pool)
     lf_ref_t cur = pool->head;
     if (LF_REF_IS_NULL(cur)) return NULL;
 
-    void *   elt  = (void*)cur.val;
-    lf_ref_t next = *(lf_ref_t*)elt;
+    u64        elt_off = cur.val;
+    lf_ref_t * elt     = (lf_ref_t*)((char*)pool + elt_off);
+    lf_ref_t   next    = *elt;
 
     if (!LF_REF_CAS(&pool->head, cur, next)) {
       LF_PAUSE();
@@ -57,8 +58,9 @@ void *lf_pool_acquire(lf_pool_t *pool)
 
 void lf_pool_release(lf_pool_t *pool, void *elt)
 {
-  u64      tag  = LF_ATOMIC_INC(&pool->tag_next);
-  lf_ref_t next = LF_REF_MAKE(tag, (u64)elt);
+  u64      elt_off = (u64)((char*)elt - (char*)pool);
+  u64      tag     = LF_ATOMIC_INC(&pool->tag_next);
+  lf_ref_t next    = LF_REF_MAKE(tag, elt_off);
 
   while (1) {
     lf_ref_t cur = pool->head;

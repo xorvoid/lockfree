@@ -27,3 +27,5 @@ static inline i64 wallclock(void)
 #define REQUIRE(expr) do {\
     if (!(expr)) FAIL("REQUIRE FAILED AT %s:%d WITH '%s'", __FUNCTION__, __LINE__, #expr); \
  } while(0)
+
+#define ARRAY_SIZE(arr) (sizeof(arr)/sizeof((arr)[0]))
