@@ -57,14 +57,16 @@ static void try_drop_head(lf_bcast_t *b, u64 head_idx)
   if (!LF_U64_CAS(&b->head_idx, head_idx, head_idx+1)) return;
 
   // FIXME: THIS IS WHERE WE MIGHT LOSE SHARED RESOURCES
-  void *elt = (void*)head_cur.val;
-  lf_pool_release(get_pool(b), elt);
+  u64 msg_off = head_cur.val;
+  msg_t *msg = (msg_t*)((char*)b + msg_off);
+  lf_pool_release(get_pool(b), msg);
 }
 
 bool lf_bcast_pub(lf_bcast_t *b, void * msg_buf, size_t msg_sz)
 {
   msg_t *msg = (msg_t*)lf_pool_acquire(get_pool(b));
   if (!msg) return false; // out of elements
+  u64 msg_off = (char*)msg - (char*)b;
 
   msg->size = msg_sz;
   memcpy(msg->payload, msg_buf, msg_sz);
@@ -98,7 +100,7 @@ bool lf_bcast_pub(lf_bcast_t *b, void * msg_buf, size_t msg_sz)
     }
 
     // Otherwise, try to append the tail
-    lf_ref_t tail_next = LF_REF_MAKE(tail_idx, (u64)msg);
+    lf_ref_t tail_next = LF_REF_MAKE(tail_idx, msg_off);
     if (!LF_REF_CAS(tail_ptr, tail_cur, tail_next)) {
       LF_PAUSE();
       continue;
@@ -147,7 +149,8 @@ bool lf_bcast_sub_next(lf_bcast_sub_t *_sub, void * msg_buf, size_t * _out_msg_s
       LF_PAUSE();
       continue;
     }
-    msg_t *msg = (msg_t*)ref.val;
+    u64 msg_off = ref.val;
+    msg_t *msg = (msg_t*)((char*)b + msg_off);
     size_t msg_sz = msg->size;
     if (msg_sz > b->max_msg_sz) { // Size doesn't make sense.. inconsistent
       LF_PAUSE();
